@@ -1,79 +1,87 @@
-use std::{
-    collections::HashMap,
-    io,
-    net::{TcpListener, TcpStream},
-    thread::JoinHandle,
-};
+// use std::collections::HashMap;
+// use std::io::{Read, Write};
+// use std::net::{TcpListener, TcpStream};
+// use std::sync::{Arc, Mutex};
+// use std::thread;
 
-use crate::Message;
+// use super::{Cluster, NodeId};
+// use crate::Message;
 
-use super::{Cluster, NodeId};
+// pub struct TcpCluster {
+//     nodes: Vec<NodeId>,
+//     me: NodeId,
+//     connections: Arc<Mutex<HashMap<NodeId, TcpStream>>>,
+//     incoming_messages: Arc<Mutex<Vec<(NodeId, Message)>>>,
+// }
 
-/// A simple TCP-based cluster implementation.
-pub struct TcpCluster {
-    nodes: Vec<NodeId>,
-    me: NodeId,
-    conns: HashMap<NodeId, TcpStream>,
-    threads: Vec<JoinHandle<()>>,
-}
+// impl TcpCluster {
+//     pub fn new(nodes: Vec<NodeId>, me: NodeId, port: u16) -> Self {
+//         let cluster = TcpCluster {
+//             nodes,
+//             me,
+//             connections: Arc::new(Mutex::new(HashMap::new())),
+//             incoming_messages: Arc::new(Mutex::new(Vec::new())),
+//         };
 
-impl TcpCluster {
-    pub fn new(nodes: Vec<NodeId>, me: NodeId) -> Self {
-        let conns = HashMap::with_capacity(nodes.len());
-        let threads = Vec::with_capacity(nodes.len());
+//         // Start listening for incoming connections
+//         let listener = TcpListener::bind(("0.0.0.0", port)).expect("Failed to bind to port");
+//         let incoming_messages = Arc::clone(&cluster.incoming_messages);
 
-        Self {
-            nodes,
-            me,
-            conns,
-            threads,
-        }
-    }
+//         thread::spawn(move || {
+//             for stream in listener.incoming() {
+//                 let mut stream = stream.expect("Failed to accept connection");
+//                 let incoming_messages = Arc::clone(&incoming_messages);
 
-    pub fn connect(&mut self, node: NodeId, ip: &str) -> io::Result<()> {
-        let conn = TcpStream::connect(ip)?;
-        self.conns.insert(node, conn);
+//                 thread::spawn(move || {
+//                     loop {
+//                         let mut buffer = [0; 1024];
+//                         match stream.read(&mut buffer) {
+//                             Ok(0) => break, // Connection closed
+//                             Ok(n) => {
+//                                 if let Ok(message) = serde_json::from_slice::<Message>(&buffer[..n])
+//                                 {
+//                                     let sender = String::from_utf8_lossy(&buffer[..n]).to_string();
+//                                     incoming_messages.lock().unwrap().push((sender, message));
+//                                 }
+//                             }
+//                             Err(_) => break,
+//                         }
+//                     }
+//                 });
+//             }
+//         });
 
-        self.threads.push(std::thread::spawn(move || {
-            // Read messages from the connection and pass them to the cluster
-            todo!()
-        }));
+//         cluster
+//     }
 
-        Ok(())
-    }
+//     fn connect(&self, node: &NodeId) -> Result<TcpStream, std::io::Error> {
+//         TcpStream::connect(node)
+//     }
+// }
 
-    pub fn disconnect(&mut self, node: &NodeId) {
-        self.conns.remove(node);
-    }
+// impl Cluster for TcpCluster {
+//     fn nodes(&self) -> &Vec<NodeId> {
+//         &self.nodes
+//     }
 
-    /// Listen in the current thread for incoming connections.
-    pub fn listen(&mut self, ip: &str) -> io::Result<()> {
-        let listener = TcpListener::bind(ip)?;
+//     fn me(&self) -> &NodeId {
+//         &self.me
+//     }
 
-        // Accept incoming connections and spawn a new thread to handle each one
-        todo!();
+//     fn send_message(&self, to: &NodeId, message: Message) {
+//         let mut connections = self.connections.lock().unwrap();
+//         let stream = connections
+//             .entry(to.clone())
+//             .or_insert_with(|| self.connect(to).expect("Failed to connect"));
 
-        Ok(())
-    }
-}
+//         let serialized = serde_json::to_vec(&message).expect("Failed to serialize message");
+//         stream
+//             .write_all(&serialized)
+//             .expect("Failed to send message");
+//     }
 
-impl Cluster for TcpCluster {
-    fn send_message(&self, to: &NodeId, message: Message) {
-        let conn = self.conns.get(to).expect("Connection not found");
-
-        // Serialize the message and send it over the connection
-        todo!("Serialize")
-    }
-
-    fn pending_messages(&self) -> Vec<(NodeId, Message)> {
-        todo!()
-    }
-
-    fn nodes(&self) -> &Vec<NodeId> {
-        &self.nodes
-    }
-
-    fn me(&self) -> &NodeId {
-        &self.me
-    }
-}
+//     fn pending_messages(&self) -> Vec<(NodeId, Message)> {
+//         let mut messages = self.incoming_messages.lock().unwrap();
+//         std::mem::take(&mut *messages)
+//     }
+// }

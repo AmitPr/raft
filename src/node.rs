@@ -54,114 +54,51 @@ impl<C: Cluster> Node<Follower, C> {
     }
 }
 
-// impl<C: Cluster> Node<Follower, C> {
-//     pub fn request_vote(
-//         &mut self,
-//         candidate: String,
-//         new_term: u64,
-//         last_log_index: u64,
-//         last_log_term: u64,
-//     ) -> bool {
-//         if self.can_vote(new_term) && self.is_log_up_to_date(last_log_index, last_log_term) {
-//             self.state.voted_for = Some(candidate.clone());
-//             self.term = new_term;
-//             true
-//         } else {
-//             false
-//         }
-//     }
-
-//     pub fn append_entries(
-//         &mut self,
-//         term: u64,
-//         leader: String,
-//         prev_log_index: u64,
-//         prev_log_term: u64,
-//         entries: Vec<String>,
-//         leader_commit: u64,
-//     ) -> bool {
-//         if term < self.term {
-//             return false;
-//         }
-
-//         if let Some(prev_log_entry) = self.log.get(prev_log_index as usize) {
-//             if prev_log_entry.term != prev_log_term {
-//                 return false;
-//             }
-//         } else if prev_log_index > 0 {
-//             return false;
-//         }
-
-//         self.log.truncate(prev_log_index as usize + 1);
-//         self.log.extend(
-//             entries
-//                 .into_iter()
-//                 .map(|command| LogEntry { term, command }),
-//         );
-//         self.commit_index = self
-//             .commit_index
-//             .max(leader_commit.min(self.log.len() as u64 - 1));
-//         self.term = term;
-//         self.state.leader = Some(leader);
-//         true
-//     }
-
-//     pub fn timeout(self) -> Node<Candidate> {
-//         let votes = vec![self.id.clone()];
-//         Node {
-//             id: self.id,
-//             log: self.log,
-//             commit_index: self.commit_index,
-//             last_applied: self.last_applied,
-//             next_index: self.next_index,
-//             match_index: self.match_index,
-//             term: self.term + 1,
-//             state: Candidate { votes },
-//         }
-//     }
-// }
-
 impl<C: Cluster> Node<Follower, C> {
-    pub fn timeout(self) -> Node<Candidate, C> {
-        Node::<Candidate, C>::promote(self)
+    pub async fn timeout(self) -> Node<Candidate, C> {
+        Node::<Candidate, C>::promote(self).await
     }
 
-    pub fn vote_requested(&mut self, candidate: NodeId, term: u64) {
+    pub async fn vote_requested(&mut self, candidate: NodeId, term: u64) {
         if self.can_vote(term) {
             self.state.voted_for = Some(candidate.clone());
             self.term = term;
 
-            self.cluster.send_message(
-                &candidate,
-                Message::Vote {
-                    follower: self.cluster.me().clone(),
-                    new_term: self.term,
-                    vote: true,
-                },
-            );
+            self.cluster
+                .send_message(
+                    &candidate,
+                    Message::Vote {
+                        follower: self.cluster.me().clone(),
+                        new_term: self.term,
+                        vote: true,
+                    },
+                )
+                .await;
         } else {
-            self.cluster.send_message(
-                &candidate,
-                Message::Vote {
-                    follower: self.cluster.me().clone(),
-                    new_term: self.term,
-                    vote: false,
-                },
-            );
+            self.cluster
+                .send_message(
+                    &candidate,
+                    Message::Vote {
+                        follower: self.cluster.me().clone(),
+                        new_term: self.term,
+                        vote: false,
+                    },
+                )
+                .await;
         }
     }
 }
 
 impl<C: Cluster> Node<Candidate, C> {
-    pub fn promote(before: Node<Follower, C>) -> Self {
-        Self::trigger_election(before)
+    pub async fn promote(before: Node<Follower, C>) -> Self {
+        Self::trigger_election(before).await
     }
 
-    pub fn timeout(self) -> Node<Candidate, C> {
-        Self::trigger_election(self)
+    pub async fn timeout(self) -> Node<Candidate, C> {
+        Self::trigger_election(self).await
     }
 
-    fn trigger_election<S: State>(before: Node<S, C>) -> Self {
+    async fn trigger_election<S: State>(before: Node<S, C>) -> Self {
         let me = Node {
             log: before.log,
             commit_index: before.commit_index,
@@ -174,19 +111,21 @@ impl<C: Cluster> Node<Candidate, C> {
             },
             cluster: before.cluster,
         };
-        me.cluster.broadcast(Message::RequestVote {
-            new_term: me.term,
-            candidate: me.cluster.me().clone(),
-            last_log_index: me.log.len() as u64 - 1,
-            last_log_term: me.log.last().map_or(0, |entry| entry.term),
-        });
+        me.cluster
+            .broadcast(Message::RequestVote {
+                new_term: me.term,
+                candidate: me.cluster.me().clone(),
+                last_log_index: me.log.len() as u64 - 1,
+                last_log_term: me.log.last().map_or(0, |entry| entry.term),
+            })
+            .await;
 
         todo!("Start election timer");
 
         me
     }
 
-    pub fn vote_received(
+    pub async fn vote_received(
         mut self,
         follower: NodeId,
         term: u64,
@@ -196,7 +135,7 @@ impl<C: Cluster> Node<Candidate, C> {
             self.state.votes.insert(follower.clone());
 
             if self.state.votes.len() >= self.cluster.quorum_size() {
-                Either::Right(Node::<Leader, C>::promote(self))
+                Either::Right(Node::<Leader, C>::promote(self).await)
             } else {
                 Either::Left(self)
             }
@@ -225,7 +164,7 @@ impl<C: Cluster> Node<Leader, C> {
         }
     }
 
-    pub fn promote(before: Node<Candidate, C>) -> Self {
+    pub async fn promote(before: Node<Candidate, C>) -> Self {
         let me = Node {
             log: before.log,
             commit_index: before.commit_index,
@@ -237,14 +176,16 @@ impl<C: Cluster> Node<Leader, C> {
             cluster: before.cluster,
         };
 
-        me.cluster.broadcast(Message::AppendEntries {
-            term: me.term,
-            leader: me.cluster.me().clone(),
-            prev_log_index: me.log.len() as u64 - 1,
-            prev_log_term: me.log.last().map_or(0, |entry| entry.term),
-            entries: vec![],
-            leader_commit: me.commit_index,
-        });
+        me.cluster
+            .broadcast(Message::AppendEntries {
+                term: me.term,
+                leader: me.cluster.me().clone(),
+                prev_log_index: me.log.len() as u64 - 1,
+                prev_log_term: me.log.last().map_or(0, |entry| entry.term),
+                entries: vec![],
+                leader_commit: me.commit_index,
+            })
+            .await;
 
         me
     }
